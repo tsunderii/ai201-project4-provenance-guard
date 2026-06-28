@@ -69,3 +69,125 @@ curl -s -X POST http://127.0.0.1:5000/submit \
   -d '{"text": "...", "creator_id": "test-user-1", "title": "My Test"}' \
   | python -m json.tool
 ```
+
+## Milestone 5: Production Layer
+
+Milestone 5 adds the four features that turn the detection pipeline into a usable
+system: transparency labels, an appeals workflow, rate limiting, and a complete
+audit log.
+
+### 1. Transparency Label
+
+`generate_transparency_label(attribution)` maps the final attribution (derived from
+the combined confidence score) to one of three exact label variants. The label
+returned by `/submit` changes with the confidence score — it is not fixed text.
+
+| Confidence Range | Attribution    | Label Text                                                                                                                                                                                                      |
+| ---------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.80 – 1.00      | `likely_ai`    | "Provenance Guard found strong signs that this piece may have been AI-generated. This label is based on multiple detection signals and should be read as a confidence-based assessment, not absolute proof."   |
+| 0.30 – 0.79      | `uncertain`    | "Provenance Guard could not confidently determine whether this piece was human-written or AI-generated. The evidence was mixed, so this content is labeled as uncertain rather than making a stronger claim."  |
+| 0.00 – 0.29      | `likely_human` | "Provenance Guard found strong signs that this piece was likely written by a human creator. This label is based on multiple detection signals and may still be reviewed if new context is provided."           |
+
+All three variants were verified reachable through the live `/submit` endpoint:
+
+| Input style                  | groq | stylo | combined | attribution    |
+| ---------------------------- | ---- | ----- | -------- | -------------- |
+| Repetitive / uniform prose   | 0.9  | 0.75  | 0.85     | `likely_ai`    |
+| Formal, borderline academic  | 0.6  | 0.33  | 0.51     | `uncertain`    |
+| Casual, personal, messy      | 0.2  | 0.33  | 0.25     | `likely_human` |
+
+### 2. Appeals Workflow — `POST /appeal`
+
+Accepts a `content_id` and `creator_reasoning`. The endpoint validates the
+content_id exists, updates the content's status to `under_review` in storage, logs
+the appeal alongside the original classification decision, and returns a
+confirmation. (`appeal_reason` is also accepted as an alias for compatibility with
+the planning spec.) Automated re-classification is intentionally out of scope.
+
+```bash
+curl -s -X POST http://127.0.0.1:5000/appeal \
+  -H "Content-Type: application/json" \
+  -d '{"content_id": "PASTE-CONTENT-ID-HERE", "creator_reasoning": "I wrote this myself from personal experience. I am a non-native English speaker and my writing style may appear more formal than typical."}' \
+  | python -m json.tool
+```
+
+Response:
+
+```json
+{
+    "appeal_id": "449a6ef1-d54e-445c-bd5e-0e462fbe8b9d",
+    "content_id": "6f305b56-9579-4825-a262-95f3809a7ab7",
+    "status": "under_review",
+    "message": "Your appeal has been received and the content is now under review."
+}
+```
+
+The matching audit-log entry records `status: "under_review"`, the populated
+`appeal_reasoning` field, the `previous_status`, and a snapshot of the original
+classification (attribution, confidence, both signal scores, and the transparency
+label) so a human reviewer has full context. A non-existent `content_id` returns
+`404`.
+
+### 3. Rate Limiting
+
+`/submit` is rate limited with Flask-Limiter using in-memory storage:
+
+```python
+@app.route("/submit", methods=["POST"])
+@limiter.limit("10 per minute;100 per day")
+```
+
+**Chosen limits: 10 per minute and 100 per day, per IP address.**
+
+Reasoning: a real creator submits their own work a handful of times — even an
+active writer testing several revisions is unlikely to exceed 10 submissions in a
+minute. The per-minute cap blocks a script from flooding the (Groq-backed, and
+therefore costly) detection pipeline, while the per-day cap limits sustained
+large-scale abuse from a single source. The numbers are generous enough for
+legitimate manual use and tight enough to make automated abuse impractical.
+
+Verification — 12 rapid requests against the 10/minute limit:
+
+```text
+Request : HTTP status
+   1    : 200
+   2    : 200
+   3    : 200
+   4    : 200
+   5    : 200
+   6    : 200
+   7    : 200
+   8    : 200
+   9    : 200
+  10    : 200
+  11    : 429
+  12    : 429
+```
+
+The first 10 succeed; requests 11 and 12 return `429 Too Many Requests` with body
+`10 per 1 minute`.
+
+### 4. Complete Audit Log
+
+Every decision is appended as a structured JSON line to `audit_log.jsonl` and served
+at `GET /log`. Classification entries capture:
+
+- `timestamp`, `content_id`, `creator_id`, `title`, `text_preview`
+- `attribution` (result) and `confidence` (combined score)
+- both individual signal scores: `groq_score` / `groq_label` / `groq_reasoning` and
+  `stylometric_score` / `stylometric_label` / `stylometric_features`
+- `appeal_filed` (whether an appeal has been filed)
+
+Appeal entries (`event_type: "appeal"`) capture the `appeal_id`, `appeal_reasoning`,
+`previous_status`, new `status` (`under_review`), and an `original_classification`
+snapshot. The log accumulates well over the required three entries across the test
+runs above.
+
+### Tests
+
+```bash
+python -m unittest tests.test_app -v
+```
+
+Both endpoint tests pass (submission returns the expected fields; an appeal using a
+real `content_id` from `/submit` returns `under_review`).

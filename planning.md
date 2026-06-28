@@ -71,7 +71,7 @@ Appeals Component
    |
    | finds original decision
    | saves appeal reasoning
-   | updates status to "under review"
+   | updates status to "under_review"
    v
 Audit Log
    |
@@ -81,7 +81,7 @@ Audit Log
 API Response
    |
    | appeal_id, content_id,
-   | status: "under review",
+   | status: "under_review",
    | confirmation message
    v
 Creator
@@ -89,7 +89,7 @@ Creator
 
 When a user submits text, the request first reaches the Flask `/submit` endpoint. The text is validated, passed into the detection pipeline, analyzed by both the Groq LLM signal and the stylometric heuristic signal, combined into a final confidence score, converted into a transparency label, saved in the audit log, and returned to the user as a structured JSON response.
 
-When a creator submits an appeal, the request goes to the Flask `/appeal` endpoint. The system finds the original content decision, saves the creator’s reasoning, updates the content status to `"under review"`, records the appeal in the audit log, and returns a confirmation response.
+When a creator submits an appeal, the request goes to the Flask `/appeal` endpoint. The system finds the original content decision, saves the creator’s reasoning, updates the content status to `"under_review"`, records the appeal in the audit log, and returns a confirmation response.
 
 ---
 
@@ -229,7 +229,7 @@ The appeal request will include:
 {
   "content_id": "content_001",
   "creator_id": "creator_123",
-  "appeal_reason": "I wrote this poem myself and can provide drafts showing my revision process."
+  "creator_reasoning": "I wrote this poem myself and can provide drafts showing my revision process."
 }
 ```
 
@@ -237,7 +237,7 @@ When an appeal is received, the system will:
 
 1. Validate that the `content_id` exists.
 2. Save the creator’s appeal reason.
-3. Update the content status to `"under review"`.
+3. Update the content status to `"under_review"`.
 4. Log the appeal alongside the original attribution decision.
 5. Return a confirmation response.
 
@@ -247,7 +247,7 @@ Example response:
 {
   "appeal_id": "appeal_001",
   "content_id": "content_001",
-  "status": "under review",
+  "status": "under_review",
   "message": "Your appeal has been received and the content is now under review."
 }
 ```
@@ -266,7 +266,7 @@ A human reviewer opening the appeal queue would see:
 * Transparency label shown to the user
 * Creator’s appeal reason
 * Appeal timestamp
-* Current status: `"under review"`
+* Current status: `"under_review"`
 
 ---
 
@@ -315,9 +315,9 @@ If the content is appealed, the audit log should update or add an appeal record:
   "content_id": "content_001",
   "event_type": "appeal_submitted",
   "appeal_id": "appeal_001",
-  "appeal_reason": "I wrote this myself and can provide draft history.",
+  "appeal_reasoning": "I wrote this myself and can provide draft history.",
   "previous_status": "classified",
-  "new_status": "under review",
+  "new_status": "under_review",
   "timestamp": "2026-06-26T12:15:00"
 }
 ```
@@ -379,7 +379,7 @@ Example request:
 {
   "content_id": "content_001",
   "creator_id": "creator_123",
-  "appeal_reason": "I wrote this myself and can provide draft history."
+  "creator_reasoning": "I wrote this myself and can provide draft history."
 }
 ```
 
@@ -389,7 +389,7 @@ Example response:
 {
   "appeal_id": "appeal_001",
   "content_id": "content_001",
-  "status": "under review",
+  "status": "under_review",
   "message": "Your appeal has been received and the content is now under review."
 }
 ```
@@ -409,7 +409,7 @@ Example response:
       "content_id": "content_001",
       "classification": "uncertain",
       "confidence": 0.58,
-      "status": "under review"
+      "status": "under_review"
     }
   ]
 }
@@ -544,7 +544,7 @@ I will ask the AI tool to generate:
 
 * Transparency label generation logic
 * A `POST /appeal` endpoint
-* Status updates from `"classified"` to `"under review"`
+* Status updates from `"classified"` to `"under_review"`
 * Structured audit logging for attribution decisions
 * Structured audit logging for appeals
 * A `GET /log` endpoint
@@ -557,7 +557,7 @@ I will verify the output by:
   * high-confidence AI
   * high-confidence human
   * uncertain
-* Submitting an appeal and checking that the status changes to `"under review"`
+* Submitting an appeal and checking that the status changes to `"under_review"`
 * Checking that the appeal reason is saved with the original decision
 * Calling `GET /log` and confirming that at least three entries are visible
 * Testing rate limiting by sending repeated requests to `/submit`

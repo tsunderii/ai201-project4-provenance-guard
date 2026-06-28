@@ -23,6 +23,12 @@ limiter = Limiter(
     storage_uri="memory://",
 )
 
+# In-memory content store keyed by content_id. Each value holds the original
+# classification decision plus a mutable status that the appeals workflow updates.
+# (A real deployment would use a database; this keeps the milestone self-contained.)
+app.submissions = {}
+app.appeals = []
+
 LOG_PATH = "audit_log.jsonl"
 
 
@@ -43,22 +49,33 @@ def read_log(limit=20):
     return [json.loads(line) for line in lines[-limit:]]
 
 
-def get_placeholder_label(attribution):
+def generate_transparency_label(attribution):
+    """
+    Transparency label generator.
+
+    Maps a final attribution (derived from the combined confidence score via
+    attribution_from_score) to one of the three exact label variants defined in
+    planning.md. The text is intentionally cautious: the AI label says "may have
+    been AI-generated" rather than presenting detection as absolute proof.
+    """
+
     if attribution == "likely_ai":
         return (
-            "Provenance Guard found signs that this piece may have been AI-generated. "
-            "This is an early single-signal assessment and not absolute proof."
+            "Provenance Guard found strong signs that this piece may have been AI-generated. "
+            "This label is based on multiple detection signals and should be read as a "
+            "confidence-based assessment, not absolute proof."
         )
 
     if attribution == "likely_human":
         return (
-            "Provenance Guard found signs that this piece was likely written by a human creator. "
-            "This is an early single-signal assessment and may change after more signals are added."
+            "Provenance Guard found strong signs that this piece was likely written by a human creator. "
+            "This label is based on multiple detection signals and may still be reviewed if new context is provided."
         )
 
     return (
         "Provenance Guard could not confidently determine whether this piece was human-written "
-        "or AI-generated. More signals are needed before making a stronger claim."
+        "or AI-generated. The evidence was mixed, so this content is labeled as uncertain rather "
+        "than making a stronger claim."
     )
 
 
@@ -382,7 +399,7 @@ def submit():
     attribution = combined_result["attribution"]
     confidence = combined_result["combined_score"]
 
-    label = get_placeholder_label(attribution)
+    label = generate_transparency_label(attribution)
 
     response = {
         "content_id": content_id,
@@ -396,6 +413,23 @@ def submit():
             "stylometric_heuristics": stylometric_result
         },
         "status": "classified"
+    }
+
+    # Persist the decision so the appeals workflow can find it and update its status.
+    app.submissions[content_id] = {
+        "content_id": content_id,
+        "creator_id": creator_id,
+        "title": title,
+        "text_preview": text[:120],
+        "attribution": attribution,
+        "confidence": confidence,
+        "label": label,
+        "signals": {
+            "groq_llm": llm_result,
+            "stylometric_heuristics": stylometric_result
+        },
+        "status": "classified",
+        "appeal": None
     }
 
     log_event({
@@ -412,10 +446,88 @@ def submit():
         "stylometric_score": stylometric_result["score"],
         "stylometric_label": stylometric_result["label"],
         "stylometric_features": stylometric_result["features"],
-        "status": "classified"
+        "status": "classified",
+        "appeal_filed": False
     })
 
     return jsonify(response)
+
+
+@app.route("/appeal", methods=["POST"])
+def appeal():
+    data = request.get_json() or {}
+
+    content_id = data.get("content_id", "").strip()
+    # Accept "creator_reasoning" (current spec) or "appeal_reason" (planning.md).
+    creator_reasoning = (
+        data.get("creator_reasoning")
+        or data.get("appeal_reason")
+        or ""
+    ).strip()
+
+    if not content_id:
+        return jsonify({
+            "error": "Missing required field: content_id"
+        }), 400
+
+    if not creator_reasoning:
+        return jsonify({
+            "error": "Missing required field: creator_reasoning"
+        }), 400
+
+    # Validate that the content_id refers to a real prior classification.
+    original = app.submissions.get(content_id)
+    if original is None:
+        return jsonify({
+            "error": f"No content found for content_id: {content_id}"
+        }), 404
+
+    appeal_id = str(uuid.uuid4())
+    previous_status = original["status"]
+
+    # Update the content status in storage.
+    original["status"] = "under_review"
+    original["appeal"] = {
+        "appeal_id": appeal_id,
+        "appeal_reasoning": creator_reasoning
+    }
+
+    app.appeals.append({
+        "appeal_id": appeal_id,
+        "content_id": content_id,
+        "appeal_reasoning": creator_reasoning,
+        "previous_status": previous_status,
+        "status": "under_review"
+    })
+
+    # Log the appeal alongside the original classification decision.
+    log_event({
+        "event_type": "appeal",
+        "appeal_id": appeal_id,
+        "content_id": content_id,
+        "creator_id": original.get("creator_id"),
+        "title": original.get("title"),
+        "text_preview": original.get("text_preview"),
+        "appeal_reasoning": creator_reasoning,
+        "previous_status": previous_status,
+        "status": "under_review",
+        "original_classification": {
+            "attribution": original.get("attribution"),
+            "confidence": original.get("confidence"),
+            "groq_score": original["signals"]["groq_llm"]["score"],
+            "groq_reasoning": original["signals"]["groq_llm"].get("reasoning"),
+            "stylometric_score": original["signals"]["stylometric_heuristics"]["score"],
+            "stylometric_features": original["signals"]["stylometric_heuristics"].get("features"),
+            "transparency_label": original.get("label")
+        }
+    })
+
+    return jsonify({
+        "appeal_id": appeal_id,
+        "content_id": content_id,
+        "status": "under_review",
+        "message": "Your appeal has been received and the content is now under review."
+    })
 
 
 @app.route("/log", methods=["GET"])

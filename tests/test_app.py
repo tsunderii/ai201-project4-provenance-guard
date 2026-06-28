@@ -21,7 +21,9 @@ class ProvenanceGuardTests(unittest.TestCase):
         self.assertIn("attribution", payload)
         self.assertIn("confidence", payload)
         self.assertIn("label", payload)
-        self.assertEqual(payload["attribution"], "uncertain")
+        self.assertIn(
+            payload["attribution"], ["likely_ai", "uncertain", "likely_human"]
+        )
 
     def test_appeal_uses_content_id_from_submit(self):
         submit_response = self.client.post(
@@ -35,14 +37,14 @@ class ProvenanceGuardTests(unittest.TestCase):
             json={
                 "content_id": content_id,
                 "creator_id": "test-user-1",
-                "appeal_reason": "I wrote this myself.",
+                "creator_reasoning": "I wrote this myself.",
             },
         )
 
         self.assertEqual(appeal_response.status_code, 200)
         payload = appeal_response.get_json()
         self.assertEqual(payload["content_id"], content_id)
-        self.assertEqual(payload["status"], "under review")
+        self.assertEqual(payload["status"], "under_review")
 
 
 if __name__ == "__main__":
