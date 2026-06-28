@@ -93,6 +93,12 @@ When a creator submits an appeal, the request goes to the Flask `/appeal` endpoi
 
 ---
 
+## AI Tool Plan
+
+AI tools will be used in at least one milestone for code generation and documentation support. For the implementation milestone, the student will provide the relevant spec sections and the architecture diagram from this document as input to the AI assistant, especially the sections on detection signals, confidence scoring and uncertainty representation, transparency label design, and the appeal workflow. The AI assistant will be asked to draft the initial Flask route skeletons, response shapes, and README structure, and the student will then revise those outputs to match the implemented logic and the project’s cautionary tone.
+
+---
+
 ## Detection Signals
 
 Provenance Guard will use two distinct detection signals. The first signal is semantic and model-based. The second signal is structural and statistical. These signals are intentionally different because they capture different properties of the submitted text.
@@ -253,6 +259,14 @@ Example response:
 ```
 
 The system does not need to automatically reclassify appealed content. The purpose of the appeal workflow is to show that creators have a path to contest decisions.
+
+### Anticipated Edge Cases
+
+The planning work also anticipates a few cases where the system may need to be especially cautious:
+
+1. Very short submissions, such as a single sentence or a brief poem, may not provide enough structural information for the stylometric signal to be reliable.
+2. Highly stylized human writing, especially poetry or intentionally repetitive prose, may look AI-like because the stylometric signal is sensitive to repetition and sentence-length uniformity.
+3. AI-generated text that was heavily edited to sound personal or imperfect may cause the Groq signal and the stylometric signal to disagree, which is why the uncertain band matters.
 
 A human reviewer opening the appeal queue would see:
 

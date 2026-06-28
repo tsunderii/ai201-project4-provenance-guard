@@ -147,6 +147,53 @@ class ProvenanceGuardTests(unittest.TestCase):
             self.assertIn("event_type", entry)
             self.assertIn("timestamp", entry)
 
+    def test_analytics_dashboard_reports_submission_and_appeal_metrics(self):
+        with patch(
+            "app.groq_llm_signal",
+            return_value={"score": 0.2, "label": "likely_human", "reasoning": "short"},
+        ), patch(
+            "app.stylometric_signal",
+            return_value={"score": 0.2, "label": "likely_human", "features": {}},
+        ):
+            self._submit("One submission", creator_id="analytics-user", remote_addr="127.0.0.9")
+            self._submit("Another submission", creator_id="analytics-user", remote_addr="127.0.0.10")
+
+        content_id = self.client.get("/log").get_json()["entries"][0]["content_id"]
+        self.client.post(
+            "/appeal",
+            json={
+                "content_id": content_id,
+                "creator_id": "analytics-user",
+                "creator_reasoning": "I wrote this myself.",
+            },
+            environ_overrides={"REMOTE_ADDR": "127.0.0.11"},
+        )
+
+        response = self.client.get("/analytics")
+        payload = response.get_json()
+
+        self.assertEqual(payload["total_submissions"], 2)
+        self.assertEqual(payload["total_appeals"], 1)
+        self.assertIn("appeal_rate", payload)
+        self.assertIn("attribution_counts", payload)
+
+    def test_submit_supports_non_text_content_types(self):
+        response = self.client.post(
+            "/submit",
+            json={
+                "content_type": "image_description",
+                "text": "A bright image of a city skyline at sunset.",
+                "creator_id": "image-user",
+                "creator_verified": True,
+            },
+            environ_overrides={"REMOTE_ADDR": "127.0.0.12"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["content_type"], "image_description")
+        self.assertIn("certificate", payload)
+
 
 if __name__ == "__main__":
     unittest.main()

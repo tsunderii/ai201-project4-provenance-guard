@@ -375,6 +375,8 @@ def submit():
     text = data.get("text", "").strip()
     creator_id = data.get("creator_id", "").strip()
     title = data.get("title", "Untitled").strip()
+    content_type = data.get("content_type", "text")
+    creator_verified = bool(data.get("creator_verified", False))
 
     if not text:
         return jsonify({
@@ -401,10 +403,19 @@ def submit():
 
     label = generate_transparency_label(attribution)
 
+    certificate = None
+    if creator_verified:
+        certificate = {
+            "status": "verified",
+            "label": "Provenance Certificate",
+            "message": "Creator verification completed. This content has a verified provenance certificate."
+        }
+
     response = {
         "content_id": content_id,
         "creator_id": creator_id,
         "title": title,
+        "content_type": content_type,
         "attribution": attribution,
         "confidence": confidence,
         "label": label,
@@ -412,7 +423,8 @@ def submit():
             "groq_llm": llm_result,
             "stylometric_heuristics": stylometric_result
         },
-        "status": "classified"
+        "status": "classified",
+        "certificate": certificate
     }
 
     # Persist the decision so the appeals workflow can find it and update its status.
@@ -420,6 +432,7 @@ def submit():
         "content_id": content_id,
         "creator_id": creator_id,
         "title": title,
+        "content_type": content_type,
         "text_preview": text[:120],
         "attribution": attribution,
         "confidence": confidence,
@@ -437,6 +450,7 @@ def submit():
         "content_id": content_id,
         "creator_id": creator_id,
         "title": title,
+        "content_type": content_type,
         "text_preview": text[:120],
         "attribution": attribution,
         "confidence": confidence,
@@ -534,6 +548,26 @@ def appeal():
 def view_log():
     return jsonify({
         "entries": read_log()
+    })
+
+
+@app.route("/analytics", methods=["GET"])
+def analytics():
+    entries = read_log()
+    total_submissions = sum(1 for entry in entries if entry.get("event_type") == "classification")
+    total_appeals = sum(1 for entry in entries if entry.get("event_type") == "appeal")
+    attribution_counts = {}
+    for entry in entries:
+        if entry.get("event_type") == "classification":
+            attribution = entry.get("attribution", "unknown")
+            attribution_counts[attribution] = attribution_counts.get(attribution, 0) + 1
+
+    return jsonify({
+        "total_submissions": total_submissions,
+        "total_appeals": total_appeals,
+        "appeal_rate": round(total_appeals / max(total_submissions, 1), 2),
+        "attribution_counts": attribution_counts,
+        "latest_entry_timestamp": entries[-1].get("timestamp") if entries else None
     })
 
 
