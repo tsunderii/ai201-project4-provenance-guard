@@ -2,6 +2,10 @@
 
 Provenance Guard is a small Flask application that estimates whether a piece of creative writing looks more likely to be human-written or AI-generated. The project is intentionally cautious: instead of presenting a binary verdict, it returns a confidence score, a transparency label, and a structured audit trail that can be reviewed by a human operator.
 
+## Demo video
+
+A short walkthrough of the project is available on YouTube: [Provenance Guard demo](https://youtu.be/nk51cXhI31Y).
+
 ## Project goal
 
 The core problem this project addresses is not “can we perfectly detect AI text?” but “can we build a system that surfaces uncertainty clearly and gives creators a fair review path?” That framing shaped both the architecture and the product decisions. The service is designed for a creative-writing platform where false positives are costly, so the interface emphasizes explanation over certainty.
